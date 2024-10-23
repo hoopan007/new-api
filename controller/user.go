@@ -527,6 +527,117 @@ func UpdateUser(c *gin.Context) {
 	return
 }
 
+func UpdateUserQuota(c *gin.Context) {
+	var req struct {
+		UserId int `json:"user_id"`
+		Quota  int `json:"quota"`
+		Action string `json:"action"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "用户ID无效",
+		})
+		return
+	}
+	if req.Quota < 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "额度无效",
+		})
+		return
+	}
+	if req.Action != "increase" && req.Action != "decrease" && req.Action != "reset" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "操作无效",
+		})
+		return
+	}
+	originUser, err := model.GetUserById(req.UserId, true)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if req.Action == "increase" {
+		if err := model.IncreaseUserQuota(originUser.Id, req.Quota); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度增加 %s", common.LogQuota(req.Quota)))
+	} else if req.Action == "decrease" {
+		if err := model.DecreaseUserQuota(originUser.Id, req.Quota); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度减少 %s", common.LogQuota(req.Quota)))
+	} else if req.Action == "reset" {
+		if err := model.BatchResetUserQuota([]int{originUser.Id}, req.Quota); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度从 %s重置为 %s", common.LogQuota(originUser.Quota), common.LogQuota(req.Quota)))
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+	return
+}
+
+func BatchResetUserQuota(c *gin.Context) {
+	var req struct {
+		UserIds []int `json:"user_ids"`
+		Quota   int   `json:"quota"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无效的参数",
+		})
+		return
+	}
+	if len(req.UserIds) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "用户ID列表无效",
+		})
+		return
+	}
+	if req.Quota < 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "额度无效",
+		})
+		return
+	}
+	if err := model.BatchResetUserQuota(req.UserIds, req.Quota); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	model.RecordLog(0, model.LogTypeManage, fmt.Sprintf("管理员批量重置用户额度，共 %d 个用户，额度为 %s，用户分别有：%s", len(req.UserIds), common.LogQuota(req.Quota), strings.Join(strings.Fields(fmt.Sprint(req.UserIds)), ",")))
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+	return
+}
+
 func UpdateSelf(c *gin.Context) {
 	var user model.User
 	err := json.NewDecoder(c.Request.Body).Decode(&user)
@@ -679,9 +790,13 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 
+	userData := map[string]any{
+		"id": cleanUser.Id,
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
+		"data":    userData,
 	})
 	return
 }
@@ -879,3 +994,4 @@ func TopUp(c *gin.Context) {
 	})
 	return
 }
+

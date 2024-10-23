@@ -161,6 +161,73 @@ func AddToken(c *gin.Context) {
 	return
 }
 
+func AddTokenByAdmin(c *gin.Context) {
+	token := model.Token{}
+	err := c.ShouldBindJSON(&token)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if token.UserId <= 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "用户ID无效",
+		})
+		return
+	}
+	if len(token.Name) > 30 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "令牌名称过长",
+		})
+		return
+	}
+	key, err := common.GenerateKey()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "生成令牌失败",
+		})
+		common.SysError("failed to generate token key: " + err.Error())
+		return
+	}
+	cleanToken := model.Token{
+		UserId:             token.UserId,
+		Name:               token.Name,
+		Key:                key,
+		CreatedTime:        common.GetTimestamp(),
+		AccessedTime:       common.GetTimestamp(),
+		ExpiredTime:        token.ExpiredTime,
+		RemainQuota:        token.RemainQuota,
+		UnlimitedQuota:     token.UnlimitedQuota,
+		ModelLimitsEnabled: token.ModelLimitsEnabled,
+		ModelLimits:        token.ModelLimits,
+		AllowIps:           token.AllowIps,
+		Group:              token.Group,
+	}
+	err = cleanToken.Insert()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	tokenData := map[string]any{
+		"id": cleanToken.Id,
+		"key": cleanToken.Key,
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    tokenData,
+	})
+	return
+}
+
 func DeleteToken(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")

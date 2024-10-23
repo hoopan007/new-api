@@ -64,6 +64,8 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/search", controller.SearchUsers)
 				adminRoute.GET("/:id", controller.GetUser)
 				adminRoute.POST("/", controller.CreateUser)
+				adminRoute.POST("/quota", controller.UpdateUserQuota)
+				adminRoute.POST("/batch_quota", controller.BatchResetUserQuota)
 				adminRoute.POST("/manage", controller.ManageUser)
 				adminRoute.PUT("/", controller.UpdateUser)
 				adminRoute.DELETE("/:id", controller.DeleteUser)
@@ -97,14 +99,22 @@ func SetApiRouter(router *gin.Engine) {
 
 		}
 		tokenRoute := apiRouter.Group("/token")
-		tokenRoute.Use(middleware.UserAuth())
 		{
-			tokenRoute.GET("/", controller.GetAllTokens)
-			tokenRoute.GET("/search", controller.SearchTokens)
-			tokenRoute.GET("/:id", controller.GetToken)
-			tokenRoute.POST("/", controller.AddToken)
-			tokenRoute.PUT("/", controller.UpdateToken)
-			tokenRoute.DELETE("/:id", controller.DeleteToken)
+			selfRoute := tokenRoute.Group("/")
+			selfRoute.Use(middleware.UserAuth())
+			{
+				selfRoute.GET("/", controller.GetAllTokens)
+				selfRoute.GET("/search", controller.SearchTokens)
+				selfRoute.GET("/:id", controller.GetToken)
+				selfRoute.POST("/", controller.AddToken)
+				selfRoute.PUT("/", controller.UpdateToken)
+				selfRoute.DELETE("/:id", controller.DeleteToken)
+			}
+			adminRoute := tokenRoute.Group("/")
+			adminRoute.Use(middleware.AdminAuth())
+			{
+				adminRoute.POST("/admin", controller.AddTokenByAdmin)
+			}
 		}
 		redemptionRoute := apiRouter.Group("/redemption")
 		redemptionRoute.Use(middleware.AdminAuth())

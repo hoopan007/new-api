@@ -457,6 +457,15 @@ func GetUserGroup(id int) (group string, err error) {
 	return group, err
 }
 
+// 批量重置用户quota
+func BatchResetUserQuota(ids []int, quota int) (err error) {
+	if quota < 0 {
+		return errors.New("quota 不能为负数！")
+	}
+	err = DB.Model(&User{}).Where("id IN (?)", ids).Update("quota", quota).Error
+	return err
+}
+
 func IncreaseUserQuota(id int, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
