@@ -51,6 +51,9 @@ jobs:
           images: |
             hoopan/new-api
             # ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
 
       - name: Build and push Docker images
         uses: docker/build-push-action@v3

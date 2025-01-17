@@ -3,10 +3,11 @@ permissions:
   contents: write
 
 on:
-  push:
-    tags:
-      - '*'
-      - '!*-alpha*'
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'reason'
+        required: false
 jobs:
   release:
     runs-on: self-hosted
