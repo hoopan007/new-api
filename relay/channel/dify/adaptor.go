@@ -9,9 +9,24 @@ import (
 	"one-api/dto"
 	"one-api/relay/channel"
 	relaycommon "one-api/relay/common"
+	"strings"
+)
+
+const (
+	BotTypeChatFlow   = 1 // chatflow default
+	BotTypeAgent      = 2
+	BotTypeWorkFlow   = 3
+	BotTypeCompletion = 4
 )
 
 type Adaptor struct {
+	BotType int
+}
+
+func (a *Adaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
+	//TODO implement me
+	panic("implement me")
+	return nil, nil
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
@@ -25,10 +40,28 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
+	if strings.HasPrefix(info.UpstreamModelName, "agent") {
+		a.BotType = BotTypeAgent
+	} else if strings.HasPrefix(info.UpstreamModelName, "workflow") {
+		a.BotType = BotTypeWorkFlow
+	} else if strings.HasPrefix(info.UpstreamModelName, "chat") {
+		a.BotType = BotTypeCompletion
+	} else {
+		a.BotType = BotTypeChatFlow
+	}
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	return fmt.Sprintf("%s/v1/chat-messages", info.BaseUrl), nil
+	switch a.BotType {
+	case BotTypeWorkFlow:
+		return fmt.Sprintf("%s/v1/workflows/run", info.BaseUrl), nil
+	case BotTypeCompletion:
+		return fmt.Sprintf("%s/v1/completion-messages", info.BaseUrl), nil
+	case BotTypeAgent:
+		fallthrough
+	default:
+		return fmt.Sprintf("%s/v1/chat-messages", info.BaseUrl), nil
+	}
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
@@ -46,6 +79,11 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
 	return nil, nil
+}
+
+func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
+	//TODO implement me
+	return nil, errors.New("not implemented")
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {

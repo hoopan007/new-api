@@ -15,6 +15,12 @@ import (
 type Adaptor struct {
 }
 
+func (a *Adaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
+	//TODO implement me
+	panic("implement me")
+	return nil, nil
+}
+
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
 	//TODO implement me
 	return nil, errors.New("not implemented")
@@ -55,9 +61,13 @@ func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dt
 	return request, nil
 }
 
+func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
+	return request, nil
+}
+
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *dto.OpenAIErrorWithStatusCode) {
 	if info.RelayMode == constant.RelayModeRerank {
-		err, usage = jinaRerankHandler(c, resp)
+		err, usage = JinaRerankHandler(c, resp)
 	} else if info.RelayMode == constant.RelayModeEmbeddings {
 		err, usage = jinaEmbeddingHandler(c, resp)
 	}

@@ -16,6 +16,12 @@ import (
 type Adaptor struct {
 }
 
+func (a *Adaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
+	//TODO implement me
+	panic("implement me")
+	return nil, nil
+}
+
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
@@ -49,9 +55,6 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 		return nil, errors.New("request is nil")
 	}
 	switch info.RelayMode {
-	case constant.RelayModeEmbeddings:
-		baiduEmbeddingRequest := embeddingRequestOpenAI2Ali(*request)
-		return baiduEmbeddingRequest, nil
 	default:
 		aliReq := requestOpenAI2Ali(*request)
 		return aliReq, nil
@@ -65,6 +68,10 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
+	return embeddingRequestOpenAI2Ali(request), nil
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {

@@ -10,12 +10,15 @@ import (
 	"mime/multipart"
 	"net/http"
 	"one-api/common"
+	constant2 "one-api/constant"
 	"one-api/dto"
 	"one-api/relay/channel"
 	"one-api/relay/channel/ai360"
+	"one-api/relay/channel/jina"
 	"one-api/relay/channel/lingyiwanwu"
 	"one-api/relay/channel/minimax"
 	"one-api/relay/channel/moonshot"
+	"one-api/relay/channel/xinference"
 	relaycommon "one-api/relay/common"
 	"one-api/relay/constant"
 	"strings"
@@ -24,6 +27,12 @@ import (
 type Adaptor struct {
 	ChannelType    int
 	ResponseFormat string
+}
+
+func (a *Adaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
+	//TODO implement me
+	panic("implement me")
+	return nil, nil
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
@@ -44,16 +53,20 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	}
 	switch info.ChannelType {
 	case common.ChannelTypeAzure:
+		apiVersion := info.ApiVersion
+		if apiVersion == "" {
+			apiVersion = constant2.AzureDefaultAPIVersion
+		}
 		// https://learn.microsoft.com/en-us/azure/cognitive-services/openai/chatgpt-quickstart?pivots=rest-api&tabs=command-line#rest-api
 		requestURL := strings.Split(info.RequestURLPath, "?")[0]
-		requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, info.ApiVersion)
+		requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, apiVersion)
 		task := strings.TrimPrefix(requestURL, "/v1/")
 		model_ := info.UpstreamModelName
 		model_ = strings.Replace(model_, ".", "", -1)
 		// https://github.com/songquanpeng/one-api/issues/67
 		requestURL = fmt.Sprintf("/openai/deployments/%s/%s", model_, task)
 		if info.RelayMode == constant.RelayModeRealtime {
-			requestURL = fmt.Sprintf("/openai/realtime?deployment=%s&api-version=%s", model_, info.ApiVersion)
+			requestURL = fmt.Sprintf("/openai/realtime?deployment=%s&api-version=%s", model_, apiVersion)
 		}
 		return relaycommon.GetFullRequestURL(info.BaseUrl, requestURL, info.ChannelType), nil
 	case common.ChannelTypeMiniMax:
@@ -109,13 +122,28 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 	if info.ChannelType != common.ChannelTypeOpenAI && info.ChannelType != common.ChannelTypeAzure {
 		request.StreamOptions = nil
 	}
-	if strings.HasPrefix(request.Model, "o1") {
+	if strings.HasPrefix(request.Model, "o1") || strings.HasPrefix(request.Model, "o3") {
 		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = 0
 		}
+		if strings.HasPrefix(request.Model, "o3") || strings.HasPrefix(request.Model, "o1") {
+			request.Temperature = nil
+		}
+		if strings.HasSuffix(request.Model, "-high") {
+			request.ReasoningEffort = "high"
+			request.Model = strings.TrimSuffix(request.Model, "-high")
+		} else if strings.HasSuffix(request.Model, "-low") {
+			request.ReasoningEffort = "low"
+			request.Model = strings.TrimSuffix(request.Model, "-low")
+		} else if strings.HasSuffix(request.Model, "-medium") {
+			request.ReasoningEffort = "medium"
+			request.Model = strings.TrimSuffix(request.Model, "-medium")
+		}
+		info.ReasoningEffort = request.ReasoningEffort
+		info.UpstreamModelName = request.Model
 	}
-	if request.Model == "o1" || request.Model == "o1-2024-12-17" {
+	if request.Model == "o1" || request.Model == "o1-2024-12-17" || strings.HasPrefix(request.Model, "o3") {
 		//修改第一个Message的内容，将system改为developer
 		if len(request.Messages) > 0 && request.Messages[0].Role == "system" {
 			request.Messages[0].Role = "developer"
@@ -126,7 +154,11 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, info *relaycommon.RelayInfo, re
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
-	return nil, errors.New("not implemented")
+	return request, nil
+}
+
+func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.EmbeddingRequest) (any, error) {
+	return request, nil
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
@@ -204,6 +236,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
 	case constant.RelayModeImagesGenerations:
 		err, usage = OpenaiTTSHandler(c, resp, info)
+	case constant.RelayModeRerank:
+		err, usage = jina.JinaRerankHandler(c, resp)
 	default:
 		if info.IsStream {
 			err, usage = OaiStreamHandler(c, resp, info)
@@ -224,6 +258,8 @@ func (a *Adaptor) GetModelList() []string {
 		return lingyiwanwu.ModelList
 	case common.ChannelTypeMiniMax:
 		return minimax.ModelList
+	case common.ChannelTypeXinference:
+		return xinference.ModelList
 	default:
 		return ModelList
 	}
@@ -239,6 +275,8 @@ func (a *Adaptor) GetChannelName() string {
 		return lingyiwanwu.ChannelName
 	case common.ChannelTypeMiniMax:
 		return minimax.ChannelName
+	case common.ChannelTypeXinference:
+		return xinference.ChannelName
 	default:
 		return ChannelName
 	}
