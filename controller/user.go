@@ -597,7 +597,7 @@ func UpdateUserQuota(c *gin.Context) {
 		return
 	}
 	if req.Action == "increase" {
-		if err := model.IncreaseUserQuota(originUser.Id, req.Quota); err != nil {
+		if err := model.IncreaseUserQuota(originUser.Id, req.Quota, true); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": err.Error(),
