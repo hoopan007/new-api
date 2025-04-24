@@ -211,3 +211,50 @@ func DeleteHistoryLogs(c *gin.Context) {
 	})
 	return
 }
+
+func GetUserIdLogs(c *gin.Context) {
+	userId, _ := strconv.Atoi(c.Query("user_id"))
+	if userId == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "user_id is required",
+		})
+		return
+	}
+	p, _ := strconv.Atoi(c.Query("p"))
+	pageSize, _ := strconv.Atoi(c.Query("page_size"))
+	if p < 1 {
+		p = 1
+	}
+	if pageSize < 0 {
+		pageSize = common.ItemsPerPage
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	logType, _ := strconv.Atoi(c.Query("type"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	tokenName := c.Query("token_name")
+	modelName := c.Query("model_name")
+	group := c.Query("group")
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, (p-1)*pageSize, pageSize, group)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": map[string]any{
+			"items":     logs,
+			"total":     total,
+			"page":      p,
+			"page_size": pageSize,
+		},
+	})
+	return
+}
