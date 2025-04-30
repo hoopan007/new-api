@@ -109,7 +109,7 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		c.Set("prompt_tokens", promptTokens)
 	}
 
-	priceData, err := helper.ModelPriceHelper(c, relayInfo, promptTokens, int(textRequest.MaxTokens))
+	priceData, err := helper.ModelPriceHelper(c, relayInfo, promptTokens, int(math.Max(float64(textRequest.MaxTokens), float64(textRequest.MaxCompletionTokens))))
 	if err != nil {
 		return service.OpenAIErrorWrapperLocal(err, "model_price_error", http.StatusInternalServerError)
 	}
@@ -160,13 +160,33 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		}
 		requestBody = bytes.NewBuffer(body)
 	} else {
-		convertedRequest, err := adaptor.ConvertRequest(c, relayInfo, textRequest)
+		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, relayInfo, textRequest)
 		if err != nil {
 			return service.OpenAIErrorWrapperLocal(err, "convert_request_failed", http.StatusInternalServerError)
 		}
 		jsonData, err := json.Marshal(convertedRequest)
 		if err != nil {
 			return service.OpenAIErrorWrapperLocal(err, "json_marshal_failed", http.StatusInternalServerError)
+		}
+
+		// apply param override
+		if len(relayInfo.ParamOverride) > 0 {
+			reqMap := make(map[string]interface{})
+			err = json.Unmarshal(jsonData, &reqMap)
+			if err != nil {
+				return service.OpenAIErrorWrapperLocal(err, "param_override_unmarshal_failed", http.StatusInternalServerError)
+			}
+			for key, value := range relayInfo.ParamOverride {
+				reqMap[key] = value
+			}
+			jsonData, err = json.Marshal(reqMap)
+			if err != nil {
+				return service.OpenAIErrorWrapperLocal(err, "param_override_marshal_failed", http.StatusInternalServerError)
+			}
+		}
+
+		if common.DebugEnabled {
+			println("requestBody: ", string(jsonData))
 		}
 		requestBody = bytes.NewBuffer(jsonData)
 	}
@@ -311,12 +331,14 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
 	promptTokens := usage.PromptTokens
 	cacheTokens := usage.PromptTokensDetails.CachedTokens
+	imageTokens := usage.PromptTokensDetails.ImageTokens
 	completionTokens := usage.CompletionTokens
 	modelName := relayInfo.OriginModelName
 
 	tokenName := ctx.GetString("token_name")
 	completionRatio := priceData.CompletionRatio
 	cacheRatio := priceData.CacheRatio
+	imageRatio := priceData.ImageRatio
 	modelRatio := priceData.ModelRatio
 	groupRatio := priceData.GroupRatio
 	modelPrice := priceData.ModelPrice
@@ -324,9 +346,11 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	// Convert values to decimal for precise calculation
 	dPromptTokens := decimal.NewFromInt(int64(promptTokens))
 	dCacheTokens := decimal.NewFromInt(int64(cacheTokens))
+	dImageTokens := decimal.NewFromInt(int64(imageTokens))
 	dCompletionTokens := decimal.NewFromInt(int64(completionTokens))
 	dCompletionRatio := decimal.NewFromFloat(completionRatio)
 	dCacheRatio := decimal.NewFromFloat(cacheRatio)
+	dImageRatio := decimal.NewFromFloat(imageRatio)
 	dModelRatio := decimal.NewFromFloat(modelRatio)
 	dGroupRatio := decimal.NewFromFloat(groupRatio)
 	dModelPrice := decimal.NewFromFloat(modelPrice)
@@ -338,7 +362,14 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	if !priceData.UsePrice {
 		nonCachedTokens := dPromptTokens.Sub(dCacheTokens)
 		cachedTokensWithRatio := dCacheTokens.Mul(dCacheRatio)
+
 		promptQuota := nonCachedTokens.Add(cachedTokensWithRatio)
+		if imageTokens > 0 {
+			nonImageTokens := dPromptTokens.Sub(dImageTokens)
+			imageTokensWithRatio := dImageTokens.Mul(dImageRatio)
+			promptQuota = nonImageTokens.Add(imageTokensWithRatio)
+		}
+
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
 
 		quotaCalculateDecimal = promptQuota.Add(completionQuota).Mul(ratio)
@@ -369,15 +400,16 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		common.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, preConsumedQuota))
 	} else {
-		quotaDelta := quota - preConsumedQuota
-		if quotaDelta != 0 {
-			err := service.PostConsumeQuota(relayInfo, quotaDelta, preConsumedQuota, true)
-			if err != nil {
-				common.LogError(ctx, "error consuming token remain quota: "+err.Error())
-			}
-		}
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+	}
+
+	quotaDelta := quota - preConsumedQuota
+	if quotaDelta != 0 {
+		err := service.PostConsumeQuota(relayInfo, quotaDelta, preConsumedQuota, true)
+		if err != nil {
+			common.LogError(ctx, "error consuming token remain quota: "+err.Error())
+		}
 	}
 
 	logModel := modelName
@@ -393,6 +425,11 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		logContent += ", " + extraContent
 	}
 	other := service.GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice)
+	if imageTokens != 0 {
+		other["image"] = true
+		other["image_ratio"] = imageRatio
+		other["image_output"] = imageTokens
+	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, relayInfo.ChannelId, promptTokens, completionTokens, logModel,
 		tokenName, quota, logContent, relayInfo.TokenId, userQuota, int(useTimeSeconds), relayInfo.IsStream, relayInfo.Group, other)
 }

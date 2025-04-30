@@ -1,20 +1,8 @@
 package dto
 
-type TextResponseWithError struct {
-	Id      string                        `json:"id"`
-	Object  string                        `json:"object"`
-	Created int64                         `json:"created"`
-	Choices []OpenAITextResponseChoice    `json:"choices"`
-	Data    []OpenAIEmbeddingResponseItem `json:"data"`
-	Model   string                        `json:"model"`
-	Usage   `json:"usage"`
-	Error   OpenAIError `json:"error"`
-}
-
 type SimpleResponse struct {
-	Usage   `json:"usage"`
-	Error   OpenAIError                `json:"error"`
-	Choices []OpenAITextResponseChoice `json:"choices"`
+	Usage `json:"usage"`
+	Error *OpenAIError `json:"error"`
 }
 
 type TextResponse struct {
@@ -38,6 +26,7 @@ type OpenAITextResponse struct {
 	Object  string                     `json:"object"`
 	Created int64                      `json:"created"`
 	Choices []OpenAITextResponseChoice `json:"choices"`
+	Error   *OpenAIError               `json:"error,omitempty"`
 	Usage   `json:"usage"`
 }
 
@@ -177,10 +166,28 @@ type CompletionsStreamResponse struct {
 }
 
 type Usage struct {
-	PromptTokens           int                `json:"prompt_tokens"`
-	CompletionTokens       int                `json:"completion_tokens"`
-	TotalTokens            int                `json:"total_tokens"`
-	PromptCacheHitTokens   int                `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptTokens         int `json:"prompt_tokens"`
+	CompletionTokens     int `json:"completion_tokens"`
+	TotalTokens          int `json:"total_tokens"`
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens,omitempty"`
+
 	PromptTokensDetails    InputTokenDetails  `json:"prompt_tokens_details"`
 	CompletionTokenDetails OutputTokenDetails `json:"completion_tokens_details"`
+	InputTokens            int                `json:"input_tokens"`
+	OutputTokens           int                `json:"output_tokens"`
+	InputTokensDetails     *InputTokenDetails `json:"input_tokens_details"`
+}
+
+type InputTokenDetails struct {
+	CachedTokens         int `json:"cached_tokens"`
+	CachedCreationTokens int `json:"-"`
+	TextTokens           int `json:"text_tokens"`
+	AudioTokens          int `json:"audio_tokens"`
+	ImageTokens          int `json:"image_tokens"`
+}
+
+type OutputTokenDetails struct {
+	TextTokens      int `json:"text_tokens"`
+	AudioTokens     int `json:"audio_tokens"`
+	ReasoningTokens int `json:"reasoning_tokens"`
 }

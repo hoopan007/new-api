@@ -108,7 +108,7 @@ func CheckUserExistOrDeleted(username string, email string) (bool, error) {
 
 func GetMaxUserId() int {
 	var user User
-	DB.Last(&user)
+	DB.Unscoped().Last(&user)
 	return user.Id
 }
 
@@ -816,4 +816,13 @@ func (user *User) FillUserByLinuxDOId() error {
 	}
 	err := DB.Where("linux_do_id = ?", user.LinuxDOId).First(user).Error
 	return err
+}
+
+func RootUserExists() bool {
+	var user User
+	err := DB.Where("role = ?", common.RoleRootUser).First(&user).Error
+	if err != nil {
+		return false
+	}
+	return true
 }
