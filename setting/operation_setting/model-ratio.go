@@ -399,14 +399,15 @@ func GetCompletionRatio(name string) float64 {
 			return ratio
 		}
 	}
-	hardCodedRatio, contain := getHardcodedCompletionModelRatio(name)
-	if contain {
-		return hardCodedRatio
-	}
+	// 注释硬性倍率
+	// hardCodedRatio, contain := getHardcodedCompletionModelRatio(name)
+	// if contain {
+	// 	return hardCodedRatio
+	// }
 	if ratio, ok := CompletionRatio[name]; ok {
 		return ratio
 	}
-	return hardCodedRatio
+	return 1
 }
 
 func getHardcodedCompletionModelRatio(name string) (float64, bool) {
