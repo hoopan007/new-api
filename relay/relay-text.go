@@ -19,6 +19,7 @@ import (
 	"one-api/setting"
 	"one-api/setting/model_setting"
 	"one-api/setting/operation_setting"
+	"one-api/types"
 	"strings"
 	"time"
 
@@ -84,35 +85,33 @@ func getAndValidateTextRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 	return textRequest, nil
 }
 
-func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
+func TextHelper(c *gin.Context) (newAPIError *types.NewAPIError) {
 
 	relayInfo := relaycommon.GenRelayInfo(c)
 
 	// get & validate textRequest 获取并验证文本请求
 	textRequest, err := getAndValidateTextRequest(c, relayInfo)
-	if textRequest.WebSearchOptions != nil {
-		c.Set("chat_completion_web_search_context_size", textRequest.WebSearchOptions.SearchContextSize)
-	}
 
 	if err != nil {
-		common.LogError(c, fmt.Sprintf("getAndValidateTextRequest failed: %s", err.Error()))
-		return service.OpenAIErrorWrapperLocal(err, "invalid_text_request", http.StatusBadRequest)
+		return types.NewError(err, types.ErrorCodeInvalidRequest)
+	}
+
+	if textRequest.WebSearchOptions != nil {
+		c.Set("chat_completion_web_search_context_size", textRequest.WebSearchOptions.SearchContextSize)
 	}
 
 	if setting.ShouldCheckPromptSensitive() {
 		words, err := checkRequestSensitive(textRequest, relayInfo)
 		if err != nil {
 			common.LogWarn(c, fmt.Sprintf("user sensitive words detected: %s", strings.Join(words, ", ")))
-			return service.OpenAIErrorWrapperLocal(err, "sensitive_words_detected", http.StatusBadRequest)
+			return types.NewError(err, types.ErrorCodeSensitiveWordsDetected)
 		}
 	}
 
-	err = helper.ModelMappedHelper(c, relayInfo)
+	err = helper.ModelMappedHelper(c, relayInfo, textRequest)
 	if err != nil {
-		return service.OpenAIErrorWrapperLocal(err, "model_mapped_error", http.StatusInternalServerError)
+		return types.NewError(err, types.ErrorCodeChannelModelMappedError)
 	}
-
-	textRequest.Model = relayInfo.UpstreamModelName
 
 	// 获取 promptTokens，如果上下文中已经存在，则直接使用
 	var promptTokens int
@@ -123,23 +122,23 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		promptTokens, err = getPromptTokens(textRequest, relayInfo)
 		// count messages token error 计算promptTokens错误
 		if err != nil {
-			return service.OpenAIErrorWrapper(err, "count_token_messages_failed", http.StatusInternalServerError)
+			return types.NewError(err, types.ErrorCodeCountTokenFailed)
 		}
 		c.Set("prompt_tokens", promptTokens)
 	}
 
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, promptTokens, int(math.Max(float64(textRequest.MaxTokens), float64(textRequest.MaxCompletionTokens))))
 	if err != nil {
-		return service.OpenAIErrorWrapperLocal(err, "model_price_error", http.StatusInternalServerError)
+		return types.NewError(err, types.ErrorCodeModelPriceError)
 	}
 
 	// pre-consume quota 预消耗配额
-	preConsumedQuota, userQuota, openaiErr := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
-	if openaiErr != nil {
-		return openaiErr
+	preConsumedQuota, userQuota, newApiErr := preConsumeQuota(c, priceData.ShouldPreConsumedQuota, relayInfo)
+	if newApiErr != nil {
+		return newApiErr
 	}
 	defer func() {
-		if openaiErr != nil {
+		if newApiErr != nil {
 			returnPreConsumedQuota(c, relayInfo, userQuota, preConsumedQuota)
 		}
 	}()
@@ -167,7 +166,7 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 
 	adaptor := GetAdaptor(relayInfo.ApiType)
 	if adaptor == nil {
-		return service.OpenAIErrorWrapperLocal(fmt.Errorf("invalid api type: %d", relayInfo.ApiType), "invalid_api_type", http.StatusBadRequest)
+		return types.NewError(fmt.Errorf("invalid api type: %d", relayInfo.ApiType), types.ErrorCodeInvalidApiType)
 	}
 	adaptor.Init(relayInfo)
 	var requestBody io.Reader
@@ -175,32 +174,29 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled {
 		body, err := common.GetRequestBody(c)
 		if err != nil {
-			return service.OpenAIErrorWrapperLocal(err, "get_request_body_failed", http.StatusInternalServerError)
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest)
 		}
 		requestBody = bytes.NewBuffer(body)
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, relayInfo, textRequest)
 		if err != nil {
-			return service.OpenAIErrorWrapperLocal(err, "convert_request_failed", http.StatusInternalServerError)
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 		}
 		jsonData, err := json.Marshal(convertedRequest)
 		if err != nil {
-			return service.OpenAIErrorWrapperLocal(err, "json_marshal_failed", http.StatusInternalServerError)
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 		}
 
 		// apply param override
 		if len(relayInfo.ParamOverride) > 0 {
 			reqMap := make(map[string]interface{})
-			err = json.Unmarshal(jsonData, &reqMap)
-			if err != nil {
-				return service.OpenAIErrorWrapperLocal(err, "param_override_unmarshal_failed", http.StatusInternalServerError)
-			}
+			_ = common.Unmarshal(jsonData, &reqMap)
 			for key, value := range relayInfo.ParamOverride {
 				reqMap[key] = value
 			}
-			jsonData, err = json.Marshal(reqMap)
+			jsonData, err = common.Marshal(reqMap)
 			if err != nil {
-				return service.OpenAIErrorWrapperLocal(err, "param_override_marshal_failed", http.StatusInternalServerError)
+				return types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid)
 			}
 		}
 
@@ -214,7 +210,7 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 	resp, err := adaptor.DoRequest(c, relayInfo, requestBody)
 
 	if err != nil {
-		return service.OpenAIErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
+		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
@@ -223,18 +219,18 @@ func TextHelper(c *gin.Context) (openaiErr *dto.OpenAIErrorWithStatusCode) {
 		httpResp = resp.(*http.Response)
 		relayInfo.IsStream = relayInfo.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
-			openaiErr = service.RelayErrorHandler(httpResp, false)
+			newApiErr = service.RelayErrorHandler(httpResp, false)
 			// reset status code 重置状态码
-			service.ResetStatusCode(openaiErr, statusCodeMappingStr)
-			return openaiErr
+			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+			return newApiErr
 		}
 	}
 
-	usage, openaiErr := adaptor.DoResponse(c, httpResp, relayInfo)
-	if openaiErr != nil {
+	usage, newApiErr := adaptor.DoResponse(c, httpResp, relayInfo)
+	if newApiErr != nil {
 		// reset status code 重置状态码
-		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
-		return openaiErr
+		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
+		return newApiErr
 	}
 
 	if strings.HasPrefix(relayInfo.OriginModelName, "gpt-4o-audio") {
@@ -252,11 +248,11 @@ func getPromptTokens(textRequest *dto.GeneralOpenAIRequest, info *relaycommon.Re
 	case relayconstant.RelayModeChatCompletions:
 		promptTokens, err = service.CountTokenChatRequest(info, *textRequest)
 	case relayconstant.RelayModeCompletions:
-		promptTokens, err = service.CountTokenInput(textRequest.Prompt, textRequest.Model)
+		promptTokens = service.CountTokenInput(textRequest.Prompt, textRequest.Model)
 	case relayconstant.RelayModeModerations:
-		promptTokens, err = service.CountTokenInput(textRequest.Input, textRequest.Model)
+		promptTokens = service.CountTokenInput(textRequest.Input, textRequest.Model)
 	case relayconstant.RelayModeEmbeddings:
-		promptTokens, err = service.CountTokenInput(textRequest.Input, textRequest.Model)
+		promptTokens = service.CountTokenInput(textRequest.Input, textRequest.Model)
 	default:
 		err = errors.New("unknown relay mode")
 		promptTokens = 0
@@ -282,16 +278,16 @@ func checkRequestSensitive(textRequest *dto.GeneralOpenAIRequest, info *relaycom
 }
 
 // 预扣费并返回用户剩余配额
-func preConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) (int, int, *dto.OpenAIErrorWithStatusCode) {
+func preConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) (int, int, *types.NewAPIError) {
 	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
 	if err != nil {
-		return 0, 0, service.OpenAIErrorWrapperLocal(err, "get_user_quota_failed", http.StatusInternalServerError)
+		return 0, 0, types.NewError(err, types.ErrorCodeQueryDataError)
 	}
 	if userQuota <= 0 {
-		return 0, 0, service.OpenAIErrorWrapperLocal(errors.New("user quota is not enough"), "insufficient_user_quota", http.StatusForbidden)
+		return 0, 0, types.NewErrorWithStatusCode(errors.New("user quota is not enough"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
 	}
 	if userQuota-preConsumedQuota < 0 {
-		return 0, 0, service.OpenAIErrorWrapperLocal(fmt.Errorf("chat pre-consumed quota failed, user quota: %s, need quota: %s", common.FormatQuota(userQuota), common.FormatQuota(preConsumedQuota)), "insufficient_user_quota", http.StatusForbidden)
+		return 0, 0, types.NewErrorWithStatusCode(fmt.Errorf("pre-consume quota failed, user quota: %s, need quota: %s", common.FormatQuota(userQuota), common.FormatQuota(preConsumedQuota)), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
 	}
 	relayInfo.UserQuota = userQuota
 	if userQuota > 100*preConsumedQuota {
@@ -315,11 +311,11 @@ func preConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommo
 	if preConsumedQuota > 0 {
 		err := service.PreConsumeTokenQuota(relayInfo, preConsumedQuota)
 		if err != nil {
-			return 0, 0, service.OpenAIErrorWrapperLocal(err, "pre_consume_token_quota_failed", http.StatusForbidden)
+			return 0, 0, types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden)
 		}
 		err = model.DecreaseUserQuota(relayInfo.UserId, preConsumedQuota)
 		if err != nil {
-			return 0, 0, service.OpenAIErrorWrapperLocal(err, "decrease_user_quota_failed", http.StatusInternalServerError)
+			return 0, 0, types.NewError(err, types.ErrorCodeUpdateDataError)
 		}
 	}
 	return preConsumedQuota, userQuota, nil
@@ -352,6 +348,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	promptTokens := usage.PromptTokens
 	cacheTokens := usage.PromptTokensDetails.CachedTokens
 	imageTokens := usage.PromptTokensDetails.ImageTokens
+	audioTokens := usage.PromptTokensDetails.AudioTokens
 	completionTokens := usage.CompletionTokens
 	modelName := relayInfo.OriginModelName
 
@@ -360,13 +357,14 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	cacheRatio := priceData.CacheRatio
 	imageRatio := priceData.ImageRatio
 	modelRatio := priceData.ModelRatio
-	groupRatio := priceData.GroupRatio
+	groupRatio := priceData.GroupRatioInfo.GroupRatio
 	modelPrice := priceData.ModelPrice
 
 	// Convert values to decimal for precise calculation
 	dPromptTokens := decimal.NewFromInt(int64(promptTokens))
 	dCacheTokens := decimal.NewFromInt(int64(cacheTokens))
 	dImageTokens := decimal.NewFromInt(int64(imageTokens))
+	dAudioTokens := decimal.NewFromInt(int64(audioTokens))
 	dCompletionTokens := decimal.NewFromInt(int64(completionTokens))
 	dCompletionRatio := decimal.NewFromFloat(completionRatio)
 	dCacheRatio := decimal.NewFromFloat(cacheRatio)
@@ -381,6 +379,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	// openai web search 工具计费
 	var dWebSearchQuota decimal.Decimal
 	var webSearchPrice float64
+	// response api 格式工具计费
 	if relayInfo.ResponsesUsageInfo != nil {
 		if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists && webSearchTool.CallCount > 0 {
 			// 计算 web search 调用的配额 (配额 = 价格 * 调用次数 / 1000 * 分组倍率)
@@ -403,6 +402,17 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		extraContent += fmt.Sprintf("Web Search 调用 1 次，上下文大小 %s，调用花费 %s",
 			searchContextSize, dWebSearchQuota.String())
 	}
+	// claude web search tool 计费
+	var dClaudeWebSearchQuota decimal.Decimal
+	var claudeWebSearchPrice float64
+	claudeWebSearchCallCount := ctx.GetInt("claude_web_search_requests")
+	if claudeWebSearchCallCount > 0 {
+		claudeWebSearchPrice = operation_setting.GetClaudeWebSearchPricePerThousand()
+		dClaudeWebSearchQuota = decimal.NewFromFloat(claudeWebSearchPrice).
+			Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit).Mul(decimal.NewFromInt(int64(claudeWebSearchCallCount)))
+		extraContent += fmt.Sprintf("Claude Web Search 调用 %d 次，调用花费 %s",
+			claudeWebSearchCallCount, dClaudeWebSearchQuota.String())
+	}
 	// file search tool 计费
 	var dFileSearchQuota decimal.Decimal
 	var fileSearchPrice float64
@@ -412,22 +422,42 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 			dFileSearchQuota = decimal.NewFromFloat(fileSearchPrice).
 				Mul(decimal.NewFromInt(int64(fileSearchTool.CallCount))).
 				Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
-			extraContent += fmt.Sprintf("File Search 调用 %d 次，调用花费 $%s",
+			extraContent += fmt.Sprintf("File Search 调用 %d 次，调用花费 %s",
 				fileSearchTool.CallCount, dFileSearchQuota.String())
 		}
 	}
 
 	var quotaCalculateDecimal decimal.Decimal
-	if !priceData.UsePrice {
-		nonCachedTokens := dPromptTokens.Sub(dCacheTokens)
-		cachedTokensWithRatio := dCacheTokens.Mul(dCacheRatio)
 
-		promptQuota := nonCachedTokens.Add(cachedTokensWithRatio)
-		if imageTokens > 0 {
-			nonImageTokens := dPromptTokens.Sub(dImageTokens)
-			imageTokensWithRatio := dImageTokens.Mul(dImageRatio)
-			promptQuota = nonImageTokens.Add(imageTokensWithRatio)
+	var audioInputQuota decimal.Decimal
+	var audioInputPrice float64
+	if !priceData.UsePrice {
+		baseTokens := dPromptTokens
+		// 减去 cached tokens
+		var cachedTokensWithRatio decimal.Decimal
+		if !dCacheTokens.IsZero() {
+			baseTokens = baseTokens.Sub(dCacheTokens)
+			cachedTokensWithRatio = dCacheTokens.Mul(dCacheRatio)
 		}
+
+		// 减去 image tokens
+		var imageTokensWithRatio decimal.Decimal
+		if !dImageTokens.IsZero() {
+			baseTokens = baseTokens.Sub(dImageTokens)
+			imageTokensWithRatio = dImageTokens.Mul(dImageRatio)
+		}
+
+		// 减去 Gemini audio tokens
+		if !dAudioTokens.IsZero() {
+			audioInputPrice = operation_setting.GetGeminiInputAudioPricePerMillionTokens(modelName)
+			if audioInputPrice > 0 {
+				// 重新计算 base tokens
+				baseTokens = baseTokens.Sub(dAudioTokens)
+				audioInputQuota = decimal.NewFromFloat(audioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
+				extraContent += fmt.Sprintf("Audio Input 花费 %s", audioInputQuota.String())
+			}
+		}
+		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio)
 
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
 
@@ -442,6 +472,8 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	// 添加 responses tools call 调用的配额
 	quotaCalculateDecimal = quotaCalculateDecimal.Add(dWebSearchQuota)
 	quotaCalculateDecimal = quotaCalculateDecimal.Add(dFileSearchQuota)
+	// 添加 audio input 独立计费
+	quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
 
 	quota := int(quotaCalculateDecimal.Round(0).IntPart())
 	totalTokens := promptTokens + completionTokens
@@ -486,7 +518,7 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	if extraContent != "" {
 		logContent += ", " + extraContent
 	}
-	other := service.GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice)
+	other := service.GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, cacheTokens, cacheRatio, modelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
 	if imageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = imageRatio
@@ -504,6 +536,10 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 			other["web_search_call_count"] = 1
 			other["web_search_price"] = webSearchPrice
 		}
+	} else if !dClaudeWebSearchQuota.IsZero() {
+		other["web_search"] = true
+		other["web_search_call_count"] = claudeWebSearchCallCount
+		other["web_search_price"] = claudeWebSearchPrice
 	}
 	if !dFileSearchQuota.IsZero() && relayInfo.ResponsesUsageInfo != nil {
 		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists {
@@ -512,6 +548,24 @@ func postConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 			other["file_search_price"] = fileSearchPrice
 		}
 	}
-	model.RecordConsumeLog(ctx, relayInfo.UserId, relayInfo.ChannelId, promptTokens, completionTokens, logModel,
-		tokenName, quota, logContent, relayInfo.TokenId, userQuota, int(useTimeSeconds), relayInfo.IsStream, relayInfo.Group, other)
+	if !audioInputQuota.IsZero() {
+		other["audio_input_seperate_price"] = true
+		other["audio_input_token_count"] = audioTokens
+		other["audio_input_price"] = audioInputPrice
+	}
+	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		ChannelId:        relayInfo.ChannelId,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		ModelName:        logModel,
+		TokenName:        tokenName,
+		Quota:            quota,
+		Content:          logContent,
+		TokenId:          relayInfo.TokenId,
+		UserQuota:        userQuota,
+		UseTimeSeconds:   int(useTimeSeconds),
+		IsStream:         relayInfo.IsStream,
+		Group:            relayInfo.UsingGroup,
+		Other:            other,
+	})
 }
