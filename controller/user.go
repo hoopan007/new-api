@@ -692,7 +692,7 @@ func UpdateUserQuota(c *gin.Context) {
 			})
 			return
 		}
-		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度增加 %s", common.LogQuota(req.Quota)))
+		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度增加 %s", logger.LogQuota(req.Quota)))
 	} else if req.Action == "decrease" {
 		if err := model.DecreaseUserQuota(originUser.Id, req.Quota); err != nil {
 			c.JSON(http.StatusOK, gin.H{
@@ -701,7 +701,7 @@ func UpdateUserQuota(c *gin.Context) {
 			})
 			return
 		}
-		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度减少 %s", common.LogQuota(req.Quota)))
+		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度减少 %s", logger.LogQuota(req.Quota)))
 	} else if req.Action == "reset" {
 		if err := model.BatchResetUserQuota([]int{originUser.Id}, req.Quota); err != nil {
 			c.JSON(http.StatusOK, gin.H{
@@ -710,7 +710,7 @@ func UpdateUserQuota(c *gin.Context) {
 			})
 			return
 		}
-		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度从 %s重置为 %s", common.LogQuota(originUser.Quota), common.LogQuota(req.Quota)))
+		model.RecordLog(originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度从 %s重置为 %s", logger.LogQuota(originUser.Quota), logger.LogQuota(req.Quota)))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -752,7 +752,7 @@ func BatchResetUserQuota(c *gin.Context) {
 		})
 		return
 	}
-	model.RecordLog(0, model.LogTypeManage, fmt.Sprintf("管理员批量重置用户额度，共 %d 个用户，额度为 %s，用户分别有：%s", len(req.UserIds), common.LogQuota(req.Quota), strings.Join(strings.Fields(fmt.Sprint(req.UserIds)), ",")))
+	model.RecordLog(0, model.LogTypeManage, fmt.Sprintf("管理员批量重置用户额度，共 %d 个用户，额度为 %s，用户分别有：%s", len(req.UserIds), logger.LogQuota(req.Quota), strings.Join(strings.Fields(fmt.Sprint(req.UserIds)), ",")))
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
