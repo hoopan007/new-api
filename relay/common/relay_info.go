@@ -3,13 +3,14 @@ package common
 import (
 	"errors"
 	"fmt"
-	"one-api/common"
-	"one-api/constant"
-	"one-api/dto"
-	relayconstant "one-api/relay/constant"
-	"one-api/types"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -511,6 +512,13 @@ type TaskInfo struct {
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
 }
 
+func FailTaskInfo(reason string) *TaskInfo {
+	return &TaskInfo{
+		Status: "FAILURE",
+		Reason: reason,
+	}
+}
+
 // RemoveDisabledFields 从请求 JSON 数据中移除渠道设置中禁用的字段
 // service_tier: 服务层级字段，可能导致额外计费（OpenAI、Claude、Responses API 支持）
 // store: 数据存储授权字段，涉及用户隐私（仅 OpenAI、Responses API 支持，默认允许透传，禁用后可能导致 Codex 无法使用）
@@ -549,25 +557,4 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 		return jsonData, nil
 	}
 	return jsonDataAfter, nil
-}
-
-type OpenAIVideo struct {
-	ID                 string            `json:"id"`
-	TaskID             string            `json:"task_id,omitempty"` //兼容旧接口 待废弃
-	Object             string            `json:"object"`
-	Model              string            `json:"model"`
-	Status             string            `json:"status"`
-	Progress           int               `json:"progress"`
-	CreatedAt          int64             `json:"created_at"`
-	CompletedAt        int64             `json:"completed_at,omitempty"`
-	ExpiresAt          int64             `json:"expires_at,omitempty"`
-	Seconds            string            `json:"seconds,omitempty"`
-	Size               string            `json:"size,omitempty"`
-	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
-	Error              *OpenAIVideoError `json:"error,omitempty"`
-	Metadata           map[string]any    `json:"metadata,omitempty"`
-}
-type OpenAIVideoError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
 }

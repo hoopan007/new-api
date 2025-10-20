@@ -4,8 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"one-api/common"
 	"strings"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 type OpenAIError struct {
@@ -60,6 +61,9 @@ const (
 	ErrorCodeReadRequestBodyFailed ErrorCode = "read_request_body_failed"
 	ErrorCodeConvertRequestFailed  ErrorCode = "convert_request_failed"
 	ErrorCodeAccessDenied          ErrorCode = "access_denied"
+
+	// request error
+	ErrorCodeBadRequestBody ErrorCode = "bad_request_body"
 
 	// response error
 	ErrorCodeReadResponseBodyFailed ErrorCode = "read_response_body_failed"
