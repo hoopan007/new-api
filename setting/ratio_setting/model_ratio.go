@@ -444,7 +444,6 @@ func GetCompletionRatio(name string) float64 {
 	// 	return hardCodedRatio
 	// }
 	if ratio, ok := completionRatioMap.Get(name); ok {
-	if ratio, ok := CompletionRatio[name]; ok {
 		return ratio
 	}
 	return 1
